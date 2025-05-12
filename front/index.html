@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Jogo de Damas Multiplayer</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="js/pieces/piece.js"></script>
+    <script src="js/client.js"></script>
+    <script src="js/game.js"></script>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+        }
+        
+        .screen {
+            display: none;
+            width: 100%;
+            max-width: 600px;
+            text-align: center;
+            padding: 20px;
+            margin-top: 20px;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .active {
+            display: block;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            padding: 12px 20px;
+            margin: 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #3e8e41;
+        }
+        
+        #gameList {
+            margin-top: 20px;
+            width: 100%;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        #gameStatus {
+            margin-top: 15px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        #gameScreen {
+            background-color: transparent;
+            box-shadow: none;
+            padding: 0;
+        }
+        
+        .waiting-animation {
+            display: inline-block;
+            margin-top: 20px;
+            font-size: 24px;
+            animation: blink 1.5s infinite;
+        }
+        
+        @keyframes blink {
+            0% { opacity: 0.2; }
+            50% { opacity: 1; }
+            100% { opacity: 0.2; }
+        }
+        
+        .game-info {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+        }
+        
+        #timer {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+            transition: color 0.3s;
+        }
+        
+        .time-warning {
+            color: #ff6600;
+        }
+        
+        .time-critical {
+            color: #ff0000;
+        }
+        
+        #result-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            flex-direction: column;
+        }
+        
+        #result-message {
+            font-size: 36px;
+            color: white;
+            margin-bottom: 20px;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        #countdown {
+            font-size: 24px;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <!-- Tela de Menu Principal -->
+    <div id="menuScreen" class="screen active">
+        <h1>Jogo de Damas Multiplayer</h1>
+        <p>Escolha uma opção para começar:</p>
+        <button id="createGameBtn">Criar Novo Jogo</button>
+        <p>ou</p>
+        <button id="showJoinGameBtn">Entrar em um Jogo Existente</button>
+        <div id="connectionStatus">Status: Desconectado</div>
+    </div>
+    
+    <!-- Tela de Entrar em um Jogo -->
+    <div id="joinGameScreen" class="screen">
+        <h1>Jogos Disponíveis</h1>
+        <div id="gameList">
+            <p>Carregando jogos disponíveis...</p>
+        </div>
+        <button id="refreshGamesBtn">Atualizar Lista</button>
+        <button id="backToMenuBtn">Voltar ao Menu</button>
+    </div>
+    
+    <!-- Tela de Espera -->
+    <div id="waitingScreen" class="screen">
+        <h1>Aguardando Oponente</h1>
+        <p>Seu jogo foi criado e você será o Jogador 1 (Peças Brancas)</p>
+        <p>Compartilhe o código do jogo: <span id="gameIdDisplay">---</span></p>
+        <div class="waiting-animation">Aguardando oponente conectar...</div>
+        <button id="cancelWaitingBtn">Cancelar</button>
+    </div>
+    
+    <!-- Tela do Jogo -->
+    <div id="gameScreen" class="screen">
+        <div class="game-info">
+            <div id="gameStatusBar">Aguardando...</div>
+            <div id="playerInfo">Você é o Jogador: <span id="playerNumber">-</span></div>
+            <div id="timer">Tempo: 60s</div>
+        </div>
+        <div id="gameContainer"></div>
+    </div>
+    
+    <div id="result-overlay">
+        <div id="result-message">Resultado do Jogo</div>
+        <div id="countdown">Voltando ao menu em 5...</div>
+    </div>
+    
+    <script>
+        // Variáveis para controle de telas
+        let currentScreen = 'menuScreen';
+        
+        // Referências para as telas
+        const menuScreen = document.getElementById('menuScreen');
+        const joinGameScreen = document.getElementById('joinGameScreen');
+        const waitingScreen = document.getElementById('waitingScreen');
+        const gameScreen = document.getElementById('gameScreen');
+        const gameContainer = document.getElementById('gameContainer');
+        
+        // Status e informações
+        const connectionStatus = document.getElementById('connectionStatus');
+        const gameStatusBar = document.getElementById('gameStatusBar');
+        const gameIdDisplay = document.getElementById('gameIdDisplay');
+        const playerNumber = document.getElementById('playerNumber');
+        
+        // Função para mudar de tela
+        function showScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(screen => {
+                screen.classList.remove('active');
+            });
+            document.getElementById(screenId).classList.add('active');
+            currentScreen = screenId;
+        }
+        
+        var config = {
+            type: Phaser.AUTO,
+            width: 600,
+            height: 600,
+            parent: 'gameContainer',
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 0 }
+                }
+            },
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        var gameClient = new GameClient();
+        var game;
+        
+        // Conectar ao servidor quando a página carrega
+        document.addEventListener('DOMContentLoaded', () => {
+            const serverUrl = 'http://localhost:3000';
+            
+            connectionStatus.textContent = 'Status: Conectando...';
+            
+            gameClient.connect(serverUrl).then(() => {
+                connectionStatus.textContent = 'Status: Conectado';
+            }).catch(err => {
+                connectionStatus.textContent = 'Status: Falha na conexão';
+            });
+            
+            // Botão para criar jogo
+            document.getElementById('createGameBtn').addEventListener('click', () => {
+                gameClient.createGame();
+                showScreen('waitingScreen');
+            });
+            
+            // Botão para mostrar tela de jogos
+            document.getElementById('showJoinGameBtn').addEventListener('click', () => {
+                loadGameList();
+                showScreen('joinGameScreen');
+            });
+            
+            // Botão para atualizar lista de jogos
+            document.getElementById('refreshGamesBtn').addEventListener('click', loadGameList);
+            
+            // Botão para voltar ao menu
+            document.getElementById('backToMenuBtn').addEventListener('click', () => {
+                showScreen('menuScreen');
+            });
+            
+            // Botão para cancelar espera
+            document.getElementById('cancelWaitingBtn').addEventListener('click', () => {
+                // Chamar o método de cancelamento no cliente
+                gameClient.cancelGame();
+                showScreen('menuScreen');
+            });
+            
+            // Iniciar o jogo Phaser quando for necessário
+            function startGame() {
+                // Certifique-se de que o jogo Phaser seja inicializado apenas uma vez
+                if (!game) {
+                    game = new Phaser.Game(config);
+                }
+            }
+            
+            // Eventos do cliente
+            gameClient.onGameCreated = (data) => {
+                gameIdDisplay.textContent = data.gameId;
+                playerNumber.textContent = "1 (Peças Brancas)";
+            };
+            
+            gameClient.onGameStart = (data) => {
+                gameStatusBar.textContent = `Jogo iniciado! ${gameClient.isMyTurn ? 'Sua vez' : 'Vez do oponente'}`;
+                showScreen('gameScreen');
+                startGame();
+            };
+            
+            gameClient.onOpponentJoin = (data) => {
+                gameStatusBar.textContent = 'Oponente conectado! Jogo iniciando...';
+                if (currentScreen === 'waitingScreen') {
+                    showScreen('gameScreen');
+                    startGame();
+                }
+            };
+            
+            gameClient.onGameJoined = (data) => {
+                playerNumber.textContent = "2 (Peças Marrons)";
+                gameStatusBar.textContent = 'Você entrou no jogo! Aguardando início...';
+                showScreen('gameScreen');
+                startGame();
+            };
+            
+            gameClient.onOpponentLeft = () => {
+                gameStatusBar.textContent = 'Oponente saiu do jogo';
+                // Opcionalmente, voltar ao menu após alguns segundos
+                setTimeout(() => {
+                    alert('O oponente saiu do jogo. Voltando ao menu...');
+                    showScreen('menuScreen');
+                }, 3000);
+            };
+            
+            gameClient.onOpponentMove = (data) => {
+                gameStatusBar.textContent = `Oponente moveu. ${gameClient.isMyTurn ? 'Sua vez' : 'Vez do oponente'}`;
+                // Atualizar o tabuleiro é feito no game.js
+            };
+            
+            gameClient.onTimeExpired = (data) => {
+                // Atualizar a interface para mostrar quem venceu
+                const overlay = document.getElementById('result-overlay');
+                const resultMessage = document.getElementById('result-message');
+                const countdown = document.getElementById('countdown');
+                
+                if (data.player === gameClient.playerId) {
+                    // Eu perdi por tempo
+                    resultMessage.innerHTML = 'TEMPO ESGOTADO!<br><span style="color: #ff5555">Você Perdeu</span>';
+                    resultMessage.style.borderColor = '#ff5555';
+                } else {
+                    // Eu ganhei porque o oponente perdeu por tempo
+                    resultMessage.innerHTML = 'TEMPO DO OPONENTE ESGOTADO!<br><span style="color: #55ff55">Você Venceu</span>';
+                    resultMessage.style.borderColor = '#55ff55';
+                }
+                
+                // Mostrar a sobreposição
+                overlay.style.display = 'flex';
+                
+                // Iniciar contagem regressiva
+                let secondsLeft = 5;
+                const countdownInterval = setInterval(() => {
+                    secondsLeft--;
+                    countdown.textContent = `Voltando ao menu em ${secondsLeft}...`;
+                    
+                    if (secondsLeft <= 0) {
+                        clearInterval(countdownInterval);
+                        window.location.reload();
+                    }
+                }, 1000);
+                
+                // Desabilitar interações com o tabuleiro
+                if (game && game.scene) {
+                    // Opcionalmente, desabilitar interações no jogo
+                }
+            };
+            
+            gameClient.onError = (error) => {
+                alert(`Erro: ${error.message}`);
+            };
+        });
+        
+        function loadGameList() {
+            const gameList = document.getElementById('gameList');
+            gameList.innerHTML = '<p>Carregando jogos...</p>';
+            
+            gameClient.getAvailableGames(games => {
+                gameList.innerHTML = '';
+                
+                if (games.length === 0) {
+                    gameList.innerHTML = '<p>Nenhum jogo disponível</p>';
+                    return;
+                }
+                
+                games.forEach(game => {
+                    const gameElement = document.createElement('div');
+                    gameElement.style.padding = '10px';
+                    gameElement.style.margin = '10px 0';
+                    gameElement.style.backgroundColor = '#f9f9f9';
+                    gameElement.style.borderRadius = '5px';
+                    
+                    const btn = document.createElement('button');
+                    btn.textContent = `Entrar no jogo ${game.id}`;
+                    btn.onclick = () => {
+                        gameClient.joinGame(game.id);
+                    };
+                    
+                    gameElement.appendChild(btn);
+                    gameList.appendChild(gameElement);
+                });
+            });
+        }
+    </script>
+</body>
+</html>
