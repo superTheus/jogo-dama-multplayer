@@ -69,7 +69,7 @@ io.on('connection', (socket) => {
   });
   
   // Realizar um movimento
-  socket.on('makeMove', ({ gameId, from, to, player }) => {
+  socket.on('makeMove', ({ gameId, from, to, player, isMultipleCapture }) => {
     const game = gameManager.getGame(gameId);
     
     if (!game) {
@@ -77,25 +77,29 @@ io.on('connection', (socket) => {
       return;
     }
     
-    // Verificar se é a vez do jogador
-    if (game.currentPlayer !== player) {
+    // Verificar se é a vez do jogador (exceto em capturas múltiplas onde o jogador continua)
+    if (game.currentPlayer !== player && !isMultipleCapture) {
       socket.emit('error', { message: 'Não é sua vez' });
       return;
     }
     
     // Atualizar o estado do jogo
-    gameManager.makeMove(gameId, from, to);
+    // Se for captura múltipla, não altera o jogador atual
+    if (!isMultipleCapture) {
+      gameManager.makeMove(gameId, from, to);
+    }
     
     // Transmitir o movimento para todos na sala
     io.to(gameId).emit('moveMade', {
       from,
       to,
       player,
-      nextPlayer: game.currentPlayer,
-      board: game.board
+      nextPlayer: isMultipleCapture ? player : game.currentPlayer, // Mantém o mesmo jogador em caso de captura múltipla
+      board: game.board,
+      isMultipleCapture // Informa ao cliente se é uma captura múltipla
     });
     
-    console.log(`Movimento realizado no jogo ${gameId} por jogador ${player}`);
+    console.log(`Movimento realizado no jogo ${gameId} por jogador ${player}${isMultipleCapture ? ' (captura múltipla)' : ''}`);
   });
   
   // Cancelar um jogo criado

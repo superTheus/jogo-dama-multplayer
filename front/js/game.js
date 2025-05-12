@@ -27,6 +27,8 @@ var PLAYER_TWO = 2; // BROWN
 var PLAYER_TURN = PLAYER_ONE;
 
 var IS_LAST_MOVE_CAPTURE = false;
+var pieceInMultipleCapture = null; // Rastreia a peça que está em uma sequência de capturas
+var isMultipleCaptureInProgress = false; // Indica se uma captura múltipla está em andamento
 
 // Variáveis para o modo multiplayer
 var isMultiplayerMode = true; // Modo multiplayer ativado
@@ -246,7 +248,7 @@ function disableAllBoardInteractions() {
 
 // Processa o movimento recebido do oponente
 function processOpponentMove(data) {
-    const { from, to } = data;
+    const { from, to, isMultipleCapture } = data;
     
     // Encontra a peça no tabuleiro baseado nas coordenadas recebidas
     const piece = BOARD[from.y][from.x];
@@ -255,6 +257,18 @@ function processOpponentMove(data) {
     if (piece && piece.type !== EMPTY_PIECE) {
         // Lógica para mover a peça visualmente
         moveOpponentPiece(piece, to.x, to.y);
+        
+        // Se for uma captura múltipla, não alterar o turno ainda
+        if (isMultipleCapture) {
+            // Atualiza a interface para mostrar que o oponente está em captura múltipla
+            const gameStatusBar = document.getElementById('gameStatusBar');
+            if (gameStatusBar) {
+                gameStatusBar.textContent = `Oponente realizando capturas múltiplas...`;
+                gameStatusBar.style.color = "red";
+            }
+            
+            return; // Não troca o turno ainda
+        }
         
         // Atualiza a vez (isMyTurn)
         isMyTurn = true;
@@ -275,10 +289,10 @@ function processOpponentMove(data) {
                 gameStatusBar.style.color = "orange";
             }
         }
+        
+        // Reinicia o temporizador após o movimento do oponente
+        startTurnTimer();
     }
-    
-    // Reinicia o temporizador após o movimento do oponente
-    startTurnTimer();
 }
 
 // Move a peça do oponente visualmente
@@ -408,6 +422,23 @@ function handleSquareClick(pointer, scene) {
     // Verifica se o quadrado de destino é preto
     if ((y + x) % 2 !== 0) {
         let piece = BOARD[y][x];
+        
+        // Se uma captura múltipla estiver em andamento, apenas a peça que está capturando pode ser movida
+        if (isMultipleCaptureInProgress && selectedPiece !== pieceInMultipleCapture) {
+            if (piece !== pieceInMultipleCapture) {
+                console.log("Você deve continuar a captura com a mesma peça!");
+                
+                // Selecionar automaticamente a peça que deve continuar capturando
+                if (selectedPiece != null) {
+                    selectedPiece.pieceImage.clearTint();
+                }
+                pieceInMultipleCapture.pieceImage.setTint(0xff0000);
+                selectedPiece = pieceInMultipleCapture;
+                
+                return;
+            }
+        }
+        
         if (selectedPiece != null && piece.type === EMPTY_PIECE) {
             // Determina qual jogador está fazendo o movimento baseado no tipo da peça
             const currentPlayerFromPiece = (selectedPiece.type === WHITE_PIECE || selectedPiece.type === WHITE_PIECE_KING) 
@@ -432,9 +463,11 @@ function handleSquareClick(pointer, scene) {
                 
                 let dx = x - selectedPiece.col;
                 let dy = y - selectedPiece.line;
+                let isCaptureMove = false;
 
                 // Verifica se o movimento é uma captura
                 if (Math.abs(dx) > 1 && Math.abs(dy) > 1) {
+                    isCaptureMove = true;
                     let stepX = dx > 0 ? 1 : -1;
                     let stepY = dy > 0 ? 1 : -1;
 
@@ -447,7 +480,7 @@ function handleSquareClick(pointer, scene) {
                             capturedPiece.pieceImage.destroy();
                             BOARD[capturedY][capturedX] = new Piece(capturedY, capturedX, EMPTY_PIECE, false, null);
 
-                            if (capturedPiece.type === WHITE_PIECE) {
+                            if (capturedPiece.type === WHITE_PIECE || capturedPiece.type === WHITE_PIECE_KING) {
                                 brownScore++;
                             } else {
                                 whiteScore++;
@@ -489,10 +522,43 @@ function handleSquareClick(pointer, scene) {
                 BOARD[y][x] = selectedPiece;
                 BOARD[oldPieceX][oldPieceY] = new Piece(oldPieceX, oldPieceY, EMPTY_PIECE, false, null);
 
+                // NOVA LÓGICA PARA CAPTURA MÚLTIPLA
+                if (isCaptureMove) {
+                    // Verifica se a peça que acabou de capturar pode capturar novamente
+                    if (canCapture(selectedPiece)) {
+                        isMultipleCaptureInProgress = true;
+                        pieceInMultipleCapture = selectedPiece;
+                        
+                        // Mantém a seleção na peça atual para continuar a captura
+                        selectedPiece.pieceImage.setTint(0xff0000);
+                        
+                        // No modo multiplayer, enviar o movimento parcial para o servidor
+                        if (isMultiplayerMode) {
+                            // Enviar movimento para o servidor com flag de captura múltipla
+                            gameClient.makeMove(fromPosition, toPosition, true);
+                            
+                            updateTurnIndicator(true); // Atualiza a interface sem trocar o turno
+                        }
+                        
+                        // Notificar o jogador que deve continuar a captura
+                        const gameStatusBar = document.getElementById('gameStatusBar');
+                        if (gameStatusBar) {
+                            gameStatusBar.textContent = "Continue a captura com a mesma peça!";
+                            gameStatusBar.style.color = "orange";
+                        }
+                        
+                        return; // Não finaliza o turno ainda
+                    }
+                }
+                
+                // Se chegamos aqui, não há mais capturas para a peça atual
+                isMultipleCaptureInProgress = false;
+                pieceInMultipleCapture = null;
+
                 // No modo multiplayer, enviar o movimento para o servidor
                 if (isMultiplayerMode) {
                     // Enviar movimento para o servidor
-                    gameClient.makeMove(fromPosition, toPosition);
+                    gameClient.makeMove(fromPosition, toPosition, false);
                     
                     // Atualizar a vez
                     isMyTurn = false;
@@ -568,6 +634,20 @@ function setupPieceClickEvent(piece) {
     
     piece.pieceImage.on('pointerdown', (pointer) => {
         if (!isMultiplayerMode || isMyTurn) {
+            // Verifica se uma captura múltipla está em andamento
+            if (isMultipleCaptureInProgress && piece !== pieceInMultipleCapture) {
+                alert("Você deve continuar a captura com a mesma peça!");
+                
+                // Selecionar automaticamente a peça que deve continuar capturando
+                if (selectedPiece != null) {
+                    selectedPiece.pieceImage.clearTint();
+                }
+                pieceInMultipleCapture.pieceImage.setTint(0xff0000);
+                selectedPiece = pieceInMultipleCapture;
+                
+                return;
+            }
+            
             // Verifica se é a peça do jogador atual no modo multiplayer
             if (isMultiplayerMode) {
                 const isWhitePiece = piece.type === WHITE_PIECE || piece.type === WHITE_PIECE_KING;
@@ -618,10 +698,17 @@ function setupPieceClickEvent(piece) {
 }
 
 // Atualiza o indicador de turno na interface
-function updateTurnIndicator() {
+function updateTurnIndicator(multipleCaptureInProgress = false) {
     const gameStatusBar = document.getElementById('gameStatusBar');
     if (gameStatusBar) {
         if (isMyTurn) {
+            if (multipleCaptureInProgress) {
+                // Status para captura múltipla em andamento
+                gameStatusBar.textContent = `Sua vez (Jogador ${myPlayerType}) - Continue a captura com a mesma peça!`;
+                gameStatusBar.style.color = "orange";
+                return;
+            }
+            
             // Verifica se há capturas obrigatórias para este jogador
             const hasCaptures = hasMandatoryCaptures(
                 myPlayerType === 1 ? PLAYER_ONE : PLAYER_TWO, 

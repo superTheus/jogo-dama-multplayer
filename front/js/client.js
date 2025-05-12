@@ -97,8 +97,8 @@ class GameClient {
         this.socket.emit('joinGame', gameId);
     }
 
-    makeMove(from, to) {
-        if (!this.isMyTurn) {
+    makeMove(from, to, isMultipleCapture = false) {
+        if (!this.isMyTurn && !isMultipleCapture) {
             console.warn('Não é sua vez de jogar');
             return false;
         }
@@ -107,7 +107,8 @@ class GameClient {
             gameId: this.gameId,
             from,
             to,
-            player: this.playerId
+            player: this.playerId,
+            isMultipleCapture // Nova propriedade para indicar captura múltipla
         });
         
         return true;
