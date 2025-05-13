@@ -27,16 +27,14 @@ var PLAYER_TWO = 2; // BROWN
 var PLAYER_TURN = PLAYER_ONE;
 
 var IS_LAST_MOVE_CAPTURE = false;
-var pieceInMultipleCapture = null; // Rastreia a peça que está em uma sequência de capturas
-var isMultipleCaptureInProgress = false; // Indica se uma captura múltipla está em andamento
+var pieceInMultipleCapture = null;
+var isMultipleCaptureInProgress = false;
 
-// Variáveis para o modo multiplayer
-var isMultiplayerMode = true; // Modo multiplayer ativado
-var currentScene; // Referência à cena atual do Phaser
-var isMyTurn = false; // Controla se é a vez do jogador atual
-var myPlayerType; // Tipo de jogador (1 = branco, 2 = marrom)
+var isMultiplayerMode = true;
+var currentScene;
+var isMyTurn = false;
+var myPlayerType;
 
-// Variáveis para o temporizador
 var turnTimer;
 var timeRemaining = 60;
 var timerDisplay;
