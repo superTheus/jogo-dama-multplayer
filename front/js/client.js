@@ -143,7 +143,7 @@ class GameClient {
 
     getAvailableGames(callback) {
         // Fazer uma requisição HTTP para o servidor para buscar jogos disponíveis
-        fetch('http://localhost:3000/games')
+        fetch('http://localhost:3030/games')
             .then(response => response.json())
             .then(data => callback(data))
             .catch(error => {
